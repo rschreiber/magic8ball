@@ -1,10 +1,16 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <SoftwareSerial.h>
+#include <DFRobotDFPlayerMini.h>
 #include "magic8ball.h"
 #include "MPU6050_Raw.h"
 
 // Initialize SH1106 display object
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+
+// DFPlayer Mini setup - Using D0 and D3 pins (GPIO16, GPIO0)
+SoftwareSerial mySoftwareSerial(D0, D3); // RX=D0(GPIO16), TX=D3(GPIO0)
+DFRobotDFPlayerMini myDFPlayer;
 
 // Magic 8-ball responses
 const char* responses[] = {
@@ -71,15 +77,14 @@ void initializeDisplay() {
   display.sendBuffer();
   
   Serial.println("SH1106 Display initialized successfully!");
-  
-  // Test pattern to verify display is working
-  Serial.println("Testing display with pattern...");
+    // Test pattern to verify display is working
+  Serial.println("Displaying startup message...");
   display.clearBuffer();
   display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(0, 15, "SH1106 Test");
-  display.drawStr(0, 30, "If you can read");
-  display.drawStr(0, 45, "this, display");
-  display.drawStr(0, 60, "is working!");
+  display.drawStr(0, 15, "Starting the");
+  display.drawStr(0, 30, "Magic 8 Ball...");
+  display.drawStr(0, 45, "Please wait");
+  display.drawStr(0, 60, "while loading");
   display.sendBuffer();
   delay(3000);
 }
@@ -253,6 +258,107 @@ void showRandomResponse() {
   displayMagic8BallResponse(responses[responseIndex]);
 }
 
+void initializeDFPlayer() {
+  Serial.println("Initializing DFPlayer Mini...");
+  
+  // Initialize SoftwareSerial for DFPlayer communication
+  mySoftwareSerial.begin(9600);
+  delay(3000); // Give more time for module to stabilize
+  
+  Serial.println("Attempting DFPlayer connection...");
+  
+  // Try different initialization methods
+  bool success = false;
+  
+  // First try without acknowledgment (more reliable)
+  Serial.print("Attempt 1 (no ACK): ");
+  if (myDFPlayer.begin(mySoftwareSerial, false, false)) {
+    Serial.println("SUCCESS!");
+    success = true;
+  } else {
+    Serial.println("Failed");
+  }
+  
+  if (!success) {
+    Serial.print("Attempt 2 (with ACK): ");
+    if (myDFPlayer.begin(mySoftwareSerial, true, false)) {
+      Serial.println("SUCCESS!");
+      success = true;
+    } else {
+      Serial.println("Failed");
+    }
+  }
+  
+  if (!success) {
+    Serial.print("Attempt 3 (with reset): ");
+    if (myDFPlayer.begin(mySoftwareSerial, true, true)) {
+      Serial.println("SUCCESS!");
+      success = true;
+    } else {
+      Serial.println("Failed");
+    }
+  }
+  
+  // Even if begin() fails, the module might still work
+  // Let's try sending commands anyway since you see the light flashing
+  if (!success) {
+    Serial.println("DFPlayer begin() failed, but trying commands anyway...");
+    Serial.println("(Light flashing suggests module is responding)");
+  } else {
+    Serial.println("DFPlayer Mini online!");
+  }  // Give time before sending commands
+  delay(2000);
+  
+  // Set volume value (0~30) - start lower for testing
+  Serial.println("Setting volume...");
+  myDFPlayer.volume(20);
+  delay(1000);
+    // Configure playback mode to prevent auto-looping
+  Serial.println("Configuring single play mode...");
+  
+  // Set single cycle mode (play one track and stop)
+  myDFPlayer.disableLoopAll(); // Disable loop all tracks
+  myDFPlayer.disableLoop(); // Disable loop current track
+  myDFPlayer.disableDAC(); // Disable DAC output (if applicable)
+  delay(500);
+  
+  // Try to set single play mode using EQ setting trick
+  // Some DFPlayer modules use EQ settings to control play mode
+  myDFPlayer.EQ(DFPLAYER_EQ_NORMAL); // Reset to normal mode
+  delay(500);
+  
+  // Ensure we're using SD card as source
+  myDFPlayer.outputDevice(DFPLAYER_DEVICE_SD);
+  delay(500);
+  
+  Serial.println("DFPlayer initialization complete (may work despite errors)");
+}
+
+void playRandomSound() {
+  // Randomly choose between the two sound files
+  // Files: 0001.mp3, 0002.mp3
+  randomSeed(millis());
+  int soundChoice = random(1, 3); // Random between 1 and 2
+  
+  Serial.print("Playing sound file: ");
+  if (soundChoice == 1) {
+    Serial.println("0001.mp3");
+  } else {
+    Serial.println("0002.mp3");
+  }
+  
+  // Stop any currently playing audio first
+  myDFPlayer.stop();
+  delay(100);
+  
+  // Play the selected file
+  myDFPlayer.play(soundChoice);
+  
+  // Note: File should stop automatically when finished
+  // If it continues to next file, this indicates the DFPlayer 
+  // is in repeat/loop mode which we try to prevent in initialization
+}
+
 void handleShakeDetection() {
   if (mpu.isInitialized()) {
     // Print accelerometer data for debugging
@@ -267,6 +373,9 @@ void handleShakeDetection() {
         showRandomResponse();
         responseShown = true;
         responseDisplayTime = millis();
+        
+        // Play sound effect on shake
+        playRandomSound();
       }
     } else {
       isShaking = false;
@@ -323,8 +432,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  Serial.println();
-  Serial.println("=== MAGIC 8-BALL ===");
+  Serial.println();  Serial.println("=== MAGIC 8-BALL ===");
   Serial.println("With SH1106 OLED Display");
   Serial.println();
   
@@ -350,9 +458,11 @@ void setup() {
     Serial.println("   Button mode enabled - press built-in button (D3)");
   }
   
+  // Initialize DFPlayer Mini
+  initializeDFPlayer();
+  
   Serial.println();
-  Serial.println("Ask the Magic 8-Ball a question...");
-  Serial.println("====================================");
+  Serial.println("Ask the Magic 8-Ball a question...");  Serial.println("====================================");
 }
 
 void loop() {

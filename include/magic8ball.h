@@ -29,6 +29,8 @@ void displayMagic8BallResponse(const char* response);
 void displayWelcomeMessage();
 void displayAnimatedWelcome();
 void draw8Ball(int centerX, int centerY, int radius, int shakeOffset = 0);
+void initializeDFPlayer();
+void playRandomSound();
 
 // External variables (defined in main.cpp)
 extern const char* responses[];
