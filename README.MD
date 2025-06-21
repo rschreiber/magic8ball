@@ -24,8 +24,8 @@ This project implements a Magic 8 Ball using the following components:
 |                   | SCL (D1)    | I2C Clock                |
 | SH1106 LCD        | SDA (D2)    | Shared I2C Bus           |
 |                   | SCL (D1)    | Shared I2C Bus           |
-| HW-247A DFPlayer  | RX (D5)     | Serial communication     |
-|                   | TX (D6)     | Serial communication     |
+| HW-247A DFPlayer  | RX (D0)     | Serial communication     |
+|                   | TX (D3)     | Serial communication     |
 |                   | SPK_1/SPK_2 | Speaker connections      |
 | Power             | 3V3/5V, GND | To all modules           |
 
