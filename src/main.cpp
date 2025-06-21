@@ -2,8 +2,11 @@
 #include <Wire.h>
 #include <SoftwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
 #include "magic8ball.h"
 #include "MPU6050_Raw.h"
+#include "wifi_config.h"
 
 // Initialize SH1106 display object
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -47,6 +50,21 @@ unsigned long lastShakeTime = 0;
 unsigned long responseDisplayTime = 0;
 const unsigned long responseDisplayDuration = 3000;
 unsigned long welcomeAnimationTime = 0;
+
+// WiFi Access Point settings
+const char* ap_ssid = WIFI_AP_SSID;
+const char* ap_password = WIFI_AP_PASSWORD;
+IPAddress local_ip(AP_IP_ADDRESS);
+IPAddress gateway(AP_GATEWAY);
+IPAddress subnet(AP_SUBNET);
+
+// Web server
+ESP8266WebServer server(WEB_SERVER_PORT);
+
+// WiFi status variables
+bool wifiEnabled = ENABLE_WIFI;
+String lastWebResponse = "";
+unsigned long lastWebResponseTime = 0;
 
 void scanI2CForDisplay() {
   Serial.println("Scanning I2C for OLED display...");
@@ -220,16 +238,34 @@ void displayWelcomeMessage() {
   float pulsePhase = (currentTime % 2000) / 2000.0 * 2 * PI; // 2 second cycle
   int radiusVariation = (int)(2 * sin(pulsePhase)); // +/- 2 pixels
   int baseRadius = 16;
-    // Draw the 8-ball in the center-top area with pulsing effect
-  draw8Ball(SCREEN_WIDTH/2, 22, baseRadius + radiusVariation, 0);
+  
+  // Draw the 8-ball in the center-top area with pulsing effect
+  draw8Ball(SCREEN_WIDTH/2, 18, baseRadius + radiusVariation, 0);
   
   // Title below the 8-ball
   int titleWidth = display.getStrWidth("MAGIC 8-BALL");
-  display.drawStr((SCREEN_WIDTH - titleWidth) / 2, 45, "MAGIC 8-BALL");
+  display.drawStr((SCREEN_WIDTH - titleWidth) / 2, 38, "MAGIC 8-BALL");
   
-  // Instructions at the bottom
-  int instructWidth = display.getStrWidth("Shake to ask!");
-  display.drawStr((SCREEN_WIDTH - instructWidth) / 2, 58, "Shake to ask!");
+  // Instructions - alternate between shake and wifi info
+  static unsigned long lastToggle = 0;
+  static bool showWiFiInfo = false;
+  
+  if (millis() - lastToggle > 3000) { // Change every 3 seconds
+    showWiFiInfo = !showWiFiInfo;
+    lastToggle = millis();
+  }
+  
+  if (wifiEnabled && showWiFiInfo) {
+    // Show WiFi info
+    int wifiWidth = display.getStrWidth("WiFi: Magic8Ball-WiFi");
+    display.drawStr((SCREEN_WIDTH - wifiWidth) / 2, 50, "WiFi: Magic8Ball-WiFi");
+    int ipWidth = display.getStrWidth("192.168.4.1");
+    display.drawStr((SCREEN_WIDTH - ipWidth) / 2, 62, "192.168.4.1");
+  } else {
+    // Show shake instruction
+    int instructWidth = display.getStrWidth("Shake to ask!");
+    display.drawStr((SCREEN_WIDTH - instructWidth) / 2, 56, "Shake to ask!");
+  }
   
   display.sendBuffer();
 }
@@ -424,8 +460,114 @@ void handleButtonPress() {
       }
     }
   }
+    lastButtonState = buttonState;
+}
+
+void initializeWiFi() {
+  Serial.println("Initializing WiFi Access Point...");
   
-  lastButtonState = buttonState;
+  // Configure Access Point
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
+  WiFi.softAP(ap_ssid, ap_password);
+  
+  delay(100);
+  
+  Serial.println("WiFi Access Point started!");
+  Serial.print("AP SSID: ");
+  Serial.println(ap_ssid);
+  Serial.print("AP Password: ");
+  Serial.println(ap_password);
+  Serial.print("AP IP address: ");
+  Serial.println(WiFi.softAPIP());
+  Serial.println("Connect to the WiFi network and visit http://192.168.4.1");
+}
+
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<title>Magic 8-Ball WiFi</title>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: 0; padding: 20px; }";
+  html += ".container { max-width: 500px; margin: 0 auto; background: rgba(255,255,255,0.1); padding: 30px; border-radius: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }";
+  html += "h1 { font-size: 2.5em; margin-bottom: 20px; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }";
+  html += ".ball { width: 120px; height: 120px; background: #000; border-radius: 50%; margin: 20px auto; position: relative; box-shadow: 0 0 20px rgba(0,0,0,0.5); }";
+  html += ".ball::after { content: '8'; position: absolute; top: 25px; left: 50%; transform: translateX(-50%); color: white; font-size: 24px; font-weight: bold; }";
+  html += "button { background: #ff6b6b; color: white; border: none; padding: 15px 30px; font-size: 18px; border-radius: 50px; cursor: pointer; margin: 10px; transition: all 0.3s; }";
+  html += "button:hover { background: #ff5252; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }";
+  html += ".response { background: rgba(255,255,255,0.2); padding: 20px; border-radius: 15px; margin: 20px 0; min-height: 60px; display: flex; align-items: center; justify-content: center; }";
+  html += ".response h2 { margin: 0; font-size: 1.5em; }";
+  html += ".info { font-size: 0.9em; opacity: 0.8; margin-top: 20px; }";
+  html += "@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }";
+  html += ".shaking { animation: shake 0.5s ease-in-out; }";
+  html += "</style></head><body>";
+  
+  html += "<div class='container'>";
+  html += "<h1>STR Magic 8-Ball</h1>";
+  html += "<div class='ball' id='ball'></div>";
+  html += "<button onclick='askQuestion()'>Ask the Magic 8-Ball!</button>";
+  html += "<div class='response' id='response'>";
+  if (lastWebResponse != "") {
+    html += "<h2>" + lastWebResponse + "</h2>";
+  } else {
+    html += "<p>Click the button to get a response!</p>";
+  }
+  html += "</div>";
+  html += "<div class='info'>";
+  html += "<p>You can also shake the physical device!</p>";
+  html += "<p>Connected clients: " + String(WiFi.softAPgetStationNum()) + "</p>";
+  html += "</div></div>";
+  
+  html += "<script>";
+  html += "function askQuestion() {";
+  html += "  document.getElementById('ball').classList.add('shaking');";
+  html += "  document.getElementById('response').innerHTML = '<p>Thinking...</p>';";
+  html += "  fetch('/ask').then(response => response.text()).then(data => {";
+  html += "    setTimeout(() => {";
+  html += "      document.getElementById('response').innerHTML = '<h2>' + data + '</h2>';";
+  html += "      document.getElementById('ball').classList.remove('shaking');";
+  html += "    }, 1000);";
+  html += "  });";
+  html += "}";
+  html += "</script></body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void handleAsk() {
+  // Generate random response
+  randomSeed(millis());
+  int responseIndex = random(numResponses);
+  String response = String(responses[responseIndex]);
+  
+  // Store for display on physical device
+  lastWebResponse = response;
+  lastWebResponseTime = millis();
+  
+  // Show on physical display
+  displayMagic8BallResponse(responses[responseIndex]);
+  responseShown = true;
+  responseDisplayTime = millis();
+  
+  // Play sound if available
+  playRandomSound();
+  
+  Serial.println("Web request - Response: " + response);
+  
+  server.send(200, "text/plain", response);
+}
+
+void handleNotFound() {
+  server.send(404, "text/plain", "Page not found");
+}
+
+void initializeWebServer() {
+  server.on("/", handleRoot);
+  server.on("/ask", handleAsk);
+  server.onNotFound(handleNotFound);
+  
+  server.begin();
+  Serial.println("Web server started on port 80");
 }
 
 void setup() {
@@ -457,15 +599,29 @@ void setup() {
     Serial.println("MPU6050 initialization failed");
     Serial.println("   Button mode enabled - press built-in button (D3)");
   }
-  
-  // Initialize DFPlayer Mini
+    // Initialize DFPlayer Mini
   initializeDFPlayer();
   
+  // Initialize WiFi Access Point and Web Server
+  if (wifiEnabled) {
+    initializeWiFi();
+    initializeWebServer();
+  }
+  
   Serial.println();
-  Serial.println("Ask the Magic 8-Ball a question...");  Serial.println("====================================");
+  Serial.println("Ask the Magic 8-Ball a question...");
+  if (wifiEnabled) {
+    Serial.println("You can also connect to WiFi and visit http://192.168.4.1");
+  }
+  Serial.println("====================================");
 }
 
 void loop() {
+  // Handle web server requests
+  if (wifiEnabled) {
+    server.handleClient();
+  }
+  
   handleShakeDetection();
   delay(100); // Small delay to prevent excessive polling
 }
